@@ -77,7 +77,22 @@ CubicVR.RegisterModule("Mesh", function (base) {
         this.originBuffer = null;
 
         obj_init = CubicVR.get(obj_init)||{};
-                
+
+        if (obj_init instanceof CubicVR.Mesh) {
+            this.booleanAdd(obj_init);
+            obj_init._clones = obj_init._clones || 1;
+            obj_init._clones++;
+            if (obj_init.name) {
+                this.name = obj_init.name+"_copy"+obj_init._clones;
+            } else {
+                this.name = null;
+            }
+            return;
+        }                
+
+        this.name = obj_init.name || null;                
+        this.dynamic = obj_init.dynamic||false;
+             
         if (obj_init.material) {
             var material = obj_init.material;
             if (material.length) {
@@ -90,8 +105,6 @@ CubicVR.RegisterModule("Mesh", function (base) {
                 }
             }            
         }
-        
-        this.name = obj_init.name || null;
 
         if (obj_init.points) {
             this.build(obj_init);
@@ -125,7 +138,7 @@ CubicVR.RegisterModule("Mesh", function (base) {
                     var possibles = "";
                     for (var k in CubicVR.primitives) {
                         if (CubicVR.primitives.hasOwnProperty(k)) {
-                            if (possibles != "") {
+                            if (possibles !== "") {
                                 possibles += ", ";
                             }
                             possibles += k;
@@ -141,8 +154,8 @@ CubicVR.RegisterModule("Mesh", function (base) {
         
         this.buildWireframe = obj_init.buildWireframe||obj_init.wireframe||(!!obj_init.wireframeMaterial)||obj_init.triangulateWireframe||false;
         this.triangulateWireframe = obj_init.triangulateWireframe||null;
-        this.wireframeMaterial = obj_init.wireframeMaterial||null;
-        this.wireframe = obj_init.wireframe;
+        this.wireframeMaterial = CubicVR.get(obj_init.wireframeMaterial,CubicVR.Material)||null;
+        this.wireframe = obj_init.wireframe||false;
         
         if (obj_init.flipFaces && this.faces.length) {
             this.flipFaces();
@@ -152,7 +165,7 @@ CubicVR.RegisterModule("Mesh", function (base) {
             this.prepare();
         }
         
-        if (obj_init.clean || obj_init.compile && this.faces.length) {
+        if (obj_init.clean || obj_init.compile && this.faces.length && !this.dynamic) {
             this.clean();
         }
         
@@ -172,6 +185,12 @@ CubicVR.RegisterModule("Mesh", function (base) {
             this.wireframeMaterial = wireframe_mat;
         },
         build: function(parts,points) {
+            var j,jMax;
+            
+            if (typeof(parts)==='string') {
+                parts = CubicVR.get(parts);
+            }
+        
             if (parts && !parts.length) {
                 parts = [parts];
             }
@@ -235,7 +254,7 @@ CubicVR.RegisterModule("Mesh", function (base) {
                     var mapper = null;
                     if (uv.length && uv.length === faces.length) {
                         if (uv.length === faces.length) {
-                            for (var j = 0, jMax = uv.length; j<jMax; j++) {
+                            for (j = 0, jMax = uv.length; j<jMax; j++) {
                                 this.faces[j+faceOfs].setUV(uv[j]);
                             }
                         } else {
@@ -252,7 +271,7 @@ CubicVR.RegisterModule("Mesh", function (base) {
 
                 if (faces && color && typeof(color) === 'object') {
                     if (color.length && color.length === faces.length) {
-                        for (var j = 0, jMax = color.length; j<jMax; j++) {
+                        for (j = 0, jMax = color.length; j<jMax; j++) {
                             this.faces[j+faceOfs].setColor(color[j]);
                         }   
                         this.materials[this.currentMaterial].colorMap = true;
@@ -262,6 +281,8 @@ CubicVR.RegisterModule("Mesh", function (base) {
                 }
 
             }
+            
+            return this;
         },
         
         showAllSegments: function () {
@@ -418,6 +439,10 @@ CubicVR.RegisterModule("Mesh", function (base) {
 
             var i, j, iMax, jMax;
 
+            if (objAdd.wireframeMaterial) {
+                this.wireframeMaterial = objAdd.wireframeMaterial;
+            }
+
             if (transform !== undef) {
                 var m = transform.getResult();
                 for (i = 0, iMax = objAdd.points.length; i < iMax; i++) {
@@ -474,6 +499,7 @@ CubicVR.RegisterModule("Mesh", function (base) {
             var vec3 = CubicVR.vec3;
             var triangle = CubicVR.triangle;
             var i = 0, iMax = this.faces.length;
+            var face, points = this.points, fp;
             
             if (face_start) {
               i = face_start;
@@ -484,12 +510,14 @@ CubicVR.RegisterModule("Mesh", function (base) {
             }
             
             for (; i < iMax; i++) {
-                if (this.faces[i].points.length < 3) {
-                    this.faces[i].normal = [0, 0, 0];
+                face = this.faces[i];
+                fp = face.points;
+                if (fp.length < 3) {
+                    face.normal = [0, 0, 0];
                     continue;
                 }
 
-                this.faces[i].normal = vec3.normalize(triangle.normal(this.points[this.faces[i].points[0]], this.points[this.faces[i].points[1]], this.points[this.faces[i].points[2]]));
+                vec3.normalize(triangle.normal(points[fp[0]], points[fp[1]], points[fp[2]],face.normal));
             }
 
             return this;
@@ -510,17 +538,25 @@ CubicVR.RegisterModule("Mesh", function (base) {
           this.instanceMaterials = mat_inst;
         },
 
-        calcNormals: function (normalMapRef_out) {
+        calcNormals: function (outNormalMapRef) {
             var vec3 = CubicVR.vec3;
             var updateMap = false;
+            var normalMapRef_out;
+                
 
-            if (normalMapRef_out !== undef) {
+            if (this.dynamic) {
+                normalMapRef_out = [];
+                outNormalMapRef = outNormalMapRef||{};
+            }
+
+            if (outNormalMapRef !== undef) {
+                normalMapRef_out = [];
                 updateMap = true;
             }
 
             this.calcFaceNormals();
 
-            var i, j, k, iMax;
+            var i, j, k, iMax, jMax, kMax;
 
             var point_smoothRef = new Array(this.points.length);
             for (i = 0, iMax = point_smoothRef.length; i < iMax; i++) {
@@ -603,45 +639,144 @@ CubicVR.RegisterModule("Mesh", function (base) {
                     this.faces[faceNum].point_normals[pointNum] = vec3.normalize(tmpNorm);
                 }
             }
+            
+            if (updateMap) {
+                var normTotal = 0;            
+
+                for (i = 0, iMax= normalMapRef_out.length; i<iMax; i++){
+                    for (j = 0, jMax= normalMapRef_out[i].length; j<jMax; j++){
+                        normTotal += normalMapRef_out[i][j].length;
+                    }
+                }
+
+                if (!outNormalMapRef.faceCount) outNormalMapRef.faceCount = new Uint8Array(this.faces.length*3);
+                if (!outNormalMapRef.faceNorm) outNormalMapRef.faceNorm = new Uint16Array(normTotal);
+
+                var c = 0;
+
+                for (i = 0, iMax = this.faces.length; i<iMax; i++){
+                    for (j = 0; j< 3; j++){
+                        var nmij = normalMapRef_out[i][j];
+                        outNormalMapRef.faceCount[i*3+j] = nmij?nmij.length:0;
+                        if (nmij) for (k = 0, kMax = nmij.length; k<kMax; k++){
+                          outNormalMapRef.faceNorm[c++] = normalMapRef_out[i][j][k];
+                        } else {
+                          c++;
+                        }
+                    }
+                }
+                
+                this.normalMapRef = outNormalMapRef;
+//                this.normalMapRef = normalMapRef_out;
+            }
 
             return this;
         },
 
         // given the parameter map output from calcNormals, recalculate all the normals again quickly
-        recalcNormals: function (normalMapRef) {
+/*        recalcNormals: function (normalMapRef) {
+            var faceNum,faceMax,pointNum,pMax,i,l,n,a,b,c,nc,pn,oRef,oFace,face,faceMapRef,nCount;
+
+            normalMapRef = normalMapRef||this.normalMapRef;
+
+            if (!normalMapRef) return;
+            
             this.calcFaceNormals();
 
-            for (var faceNum = 0, faceMax = this.faces.length; faceNum < faceMax; faceNum++) {
-                var pointMax = normalMapRef[faceNum].length;
-                var face = this.faces[faceNum];
+            for (faceNum = 0, faceMax = this.faces.length; faceNum < faceMax; faceNum++) {
+                face = this.faces[faceNum];
+                faceMapRef = normalMapRef[faceNum];
+                
+                for (pointNum = 0, pMax = face.points.length; pointNum < pMax; pointNum++) {
+                    pn = face.point_normals[pointNum];
+                    oRef = faceMapRef[pointNum];
+                    nCount = oRef.length;
 
-                for (var pointNum = 0, pMax = face.points.length; pointNum < pMax; pointNum++) {
-                    var oRef = normalMapRef[faceNum][pointNum];
-                    var baseNorm = face.point_normals[pointNum];
-
-                    baseNorm[0] = face.normal[0];
-                    baseNorm[1] = face.normal[1];
-                    baseNorm[2] = face.normal[2];
-
-                    var nCount = oRef.length;
+                    n = face.normal;
+                    a = n[0];
+                    b = n[1];
+                    c = n[2];
 
                     for (var i = 0; i < nCount; i++) {
-                        var oFace = this.faces[oRef[i]];
-                        baseNorm[0] += oFace.normal[0];
-                        baseNorm[1] += oFace.normal[1];
-                        baseNorm[2] += oFace.normal[2];
+                        oFace = this.faces[oRef[i]];
+                        n = oFace.normal;
+                        a += n[0];
+                        b += n[1];
+                        c += n[2];
                     }
 
-                    if (nCount !== 0) {
-                        baseNorm[0] /= (nCount + 1);
-                        baseNorm[1] /= (nCount + 1);
-                        baseNorm[2] /= (nCount + 1);
+                    if (nCount) {
+                        nc = nCount+1;
+                        a /= nc;
+                        b /= nc;
+                        c /= nc;
 
-                        var l = Math.sqrt(baseNorm[0] * baseNorm[0] + baseNorm[1] * baseNorm[1] + baseNorm[2] * baseNorm[2]);
+                        l = Math.sqrt(a * a + b * b + c * c);
 
-                        baseNorm[0] /= l;
-                        baseNorm[1] /= l;
-                        baseNorm[2] /= l;
+                        a /= l;
+                        b /= l;
+                        c /= l;
+                        
+                        pn[0] = a; pn[1] = b; pn[2] = c;
+                    }
+                }
+            }
+
+            return this;
+        },
+        */
+        
+        // New version with linear typed array run
+        recalcNormals: function (normalMapRef) {
+            var faceNum,faceMax,pointNum,pMax,i,l,n,a,b,c,nc,pn,oRef,oFace,face,faceMapRef,nCount;
+
+            normalMapRef = normalMapRef||this.normalMapRef;
+
+            if (!normalMapRef) return;
+            
+            this.calcFaceNormals();
+
+            var refIdx = 0;
+            var faceIdx = 0;
+            var rc = 0;
+            var on;
+
+            for (faceNum = 0, faceMax = this.faces.length; faceNum < faceMax; faceNum++) {
+                face = this.faces[faceNum];
+                on = face.normal;
+
+                for (j = 0; j < 3; j++) {
+                    pn = face.point_normals[j];
+                    a = on[0];
+                    b = on[1];
+                    c = on[2];
+
+                    nCount = normalMapRef.faceCount[faceIdx++];
+                    
+                    for (i = 0, iMax = nCount; i<iMax; i++) {
+                        oRef = normalMapRef.faceNorm[refIdx++];
+                        oFace = this.faces[oRef];
+                        n = oFace.normal;
+                        a += n[0];
+                        b += n[1];
+                        c += n[2];          
+                    }
+                    
+                    if (nCount) {
+                        nc = nCount+1;
+                        a /= nc;
+                        b /= nc;
+                        c /= nc;
+
+                        l = Math.sqrt(a * a + b * b + c * c);
+
+                        a /= l;
+                        b /= l;
+                        c /= l;
+
+                        pn[0] = a; pn[1] = b; pn[2] = c;
+                    } else {
+                        rc++;
                     }
                 }
             }
@@ -649,7 +784,7 @@ CubicVR.RegisterModule("Mesh", function (base) {
             return this;
         },
         
-        removeDoubles: function() {
+        removeDoubles: function(tolerance) {
           var newPoints = [];         
           var remap = [];
           var i, iMax, j, jMax;
@@ -659,7 +794,7 @@ CubicVR.RegisterModule("Mesh", function (base) {
             var searchPt = this.points[i];
             for (j = 0, jMax = newPoints.length; j<jMax; j++) {
               var findPt = newPoints[j];
-              if (CubicVR.vec3.equal(searchPt,findPt)) {
+              if (CubicVR.vec3.equal(searchPt,findPt,tolerance)) {
                 foundPt=j;
                 break;
               }
@@ -679,6 +814,8 @@ CubicVR.RegisterModule("Mesh", function (base) {
               face.points[j] = remap[face.points[j]];
             }
           }
+          
+          return this;
         },
         
         
@@ -697,7 +834,7 @@ CubicVR.RegisterModule("Mesh", function (base) {
                     
                     if (j) { 
                         ptb = face.points[j]; 
-                        pta = face.points[j-1]
+                        pta = face.points[j-1];
                             
                     } else { 
                         ptb = face.points[j]; 
@@ -718,6 +855,295 @@ CubicVR.RegisterModule("Mesh", function (base) {
             
             return this;            
         },
+        
+        subdivide: function(level,catmull) { // catmull-clark subdivision with alternate regular subdivision if catmull===false
+            var vec3 = CubicVR.vec3; 
+            catmull = (catmull===undef)?true:catmull;
+
+            if (level === undef) {
+                level = 1;
+            }
+            if (level === 0) {
+                return;
+            }
+
+            var i,j,iMax,jMax,k,kMax,face,edge;
+            var edges = {};
+            var point_face_list = [];
+            var point_edge_list = [];
+            var pointCount = this.points.length;            
+            var faceCount = this.faces.length;
+    
+            var face_points = [];
+            var face_point_uv = [];
+            var face_point_color = [];
+            var face_point_normal = [];
+            
+            for (i = 0, iMax = faceCount; i < iMax; i++) {
+                face = this.faces[i];
+                if (face.points && (face.points.length===3||face.points.length===4)) {
+
+                    var face_point = [0,0,0];
+
+                    for (j = 0, jMax = face.points.length; j < jMax; j++) {
+                         var addPoint = this.points[face.points[j]];
+                         face_point[0]+=addPoint[0];
+                         face_point[1]+=addPoint[1];
+                         face_point[2]+=addPoint[2];
+                    }
+
+                    face_point[0]/=jMax;
+                    face_point[1]/=jMax;
+                    face_point[2]/=jMax;
+                    face_points[i] = this.addPoint(face_point);
+                    
+                    if (face.uvs.length === face.points.length) {
+                        var face_uv = [0,0];
+                    
+                        for (j = 0, jMax = face.uvs.length; j < jMax; j++) {
+                            var point_uv = face.uvs[j];
+                            face_uv[0]+=point_uv[0];
+                            face_uv[1]+=point_uv[1];
+                        }
+                        
+                        face_uv[0]/=jMax;
+                        face_uv[1]/=jMax;
+                        face_point_uv[i] = face_uv;
+                    }
+                    
+                    if (face.point_colors.length === face.points.length) {
+                        var face_color = [0,0,0];
+                    
+                        for (j = 0, jMax = face.point_colors.length; j < jMax; j++) {
+                            var point_color = face.point_colors[j];
+                            face_color[0]+=point_color[0];
+                            face_color[1]+=point_color[1];
+                            face_color[2]+=point_color[2];
+                        }
+                        
+                        face_color[0]/=jMax;
+                        face_color[1]/=jMax;
+                        face_color[2]/=jMax;
+                        face_point_color[i] = face_color;
+                    }
+                    
+                    if (face.point_normals.length === face.points.length) {
+                        var face_normal = [0,0,0];
+                    
+                        for (j = 0, jMax = face.point_normals.length; j < jMax; j++) {
+                            var point_normal = face.point_normals[j];
+                            face_normal[0]+=point_normal[0];
+                            face_normal[1]+=point_normal[1];
+                            face_normal[2]+=point_normal[2];
+                        }
+                        
+                        face_normal[0]/=jMax;
+                        face_normal[1]/=jMax;
+                        face_normal[2]/=jMax;
+                        face_point_normal[i] = face_normal;
+                    }
+                }
+
+            }
+
+            for (i = 0, iMax = this.faces.length; i < iMax; i++) {
+                face = this.faces[i];
+                for (j = 0, jMax = face.points.length; j < jMax; j++) {
+                    var pta,ptb,fpa,fpb;
+
+                    if (j) { 
+                        fpa = j;
+                        fpb = j-1;
+                    } else { 
+                        fpa = j; 
+                        fpb = jMax-1; 
+                    }
+
+                    ptb = face.points[fpa]; 
+                    pta = face.points[fpb];
+                    
+                    edges[pta] = edges[pta] || {};
+                    point_face_list[pta] = point_face_list[pta] || [];
+                    point_face_list[pta].push(i);
+                    
+                    if (edges[pta][ptb]!==undef) {
+                        log("Mesh.subdivide warning face #"+i+", edge:["+fpa+"->"+fpb+"] already used by face#"+edges[pta][ptb].face+", edge:["+edges[pta][ptb].fpa+"->"+edges[pta][ptb].fpb+"] possible mangling.");
+                    }
+                    
+                    edges[pta][ptb] = { face:i, a: pta, b: ptb, fpa: fpa, fpb: fpb };
+                }
+            }
+
+            for (i in edges) {
+                if (!edges.hasOwnProperty(i)) continue;
+                for (j in edges[i]) {
+                    if (!edges[i].hasOwnProperty(j)) continue;
+                    var edgeA = edges[i][j];
+                    var edgeB = edges[j][i];
+                    if (edgeB===undef) {
+                        log("Mesh.subdivide error. Hole at face #"+edgeA.face+", Edge:["+edgeA.fpa+"->"+edgeA.fpb+"], holes not yet supported; perhaps use Mesh.removeDoubles()?");
+                        return;
+                    }
+                    if (!edgeA.edge_point) {
+                        var edge_avg = vec3.multiply(vec3.add(this.points[edgeA.a],this.points[edgeA.b]),0.5);
+                        if (catmull) {
+                            var face_avg = vec3.multiply(vec3.add(this.points[face_points[edgeA.face]],this.points[face_points[edgeB.face]]),0.5);
+                            edgeA.edge_point = vec3.multiply(vec3.add(edge_avg,face_avg),0.5);
+                        } else {
+                           edgeA.edge_point = edge_avg;
+                        }
+                        edgeB.edge_point = edgeA.edge_point;
+                        edgeA.edge_avg = edge_avg;
+                        edgeB.edge_avg = edge_avg;
+                        edgeA.ep_idx = this.addPoint(edgeA.edge_point);
+                        edgeB.ep_idx = edgeA.ep_idx;
+                    }                   
+                    point_edge_list[edgeA.a] = point_edge_list[edgeA.a] || [];
+                    point_edge_list[edgeA.a].push(edgeA.edge_avg);
+                    var edge_uvs = this.faces[edgeA.face].uvs;
+                    if (edge_uvs.length) {
+                        var uv_a = edge_uvs[edgeA.fpa];
+                        var uv_b = edge_uvs[edgeA.fpb];
+
+                        edgeA.uv = [(uv_a[0]+uv_b[0])/2,(uv_a[1]+uv_b[1])/2];
+                    }
+                    var edge_colors = this.faces[edgeA.face].point_colors;
+                    if (edge_colors.length) {
+                        var color_a = edge_colors[edgeA.fpa];
+                        var color_b = edge_colors[edgeA.fpb];
+
+                        edgeA.color = vec3.multiply(vec3.add(color_a,color_b),0.5);
+                    }
+                    var edge_normals = this.faces[edgeA.face].point_normals;
+                    if (edge_normals.length) {
+                        var normal_a = edge_normals[edgeA.fpa];
+                        var normal_b = edge_normals[edgeA.fpb];
+
+                        edgeA.normal = vec3.normalize(vec3.multiply(vec3.add(normal_a,normal_b),0.5));
+                    }
+                }
+            }
+
+            if (catmull) {
+                var point_face_average = [];
+                
+                for (i = 0, iMax = pointCount; i<iMax; i++) {
+                    var pointFaceAvg = [0,0,0];
+                    for (j = 0, jMax = point_face_list[i].length; j < jMax; j++) {                    
+                        var addFacePoint = this.points[face_points[point_face_list[i][j]]];
+                        pointFaceAvg[0] += addFacePoint[0]; 
+                        pointFaceAvg[1] += addFacePoint[1]; 
+                        pointFaceAvg[2] += addFacePoint[2]; 
+                    }
+                    pointFaceAvg[0]/=jMax;
+                    pointFaceAvg[1]/=jMax;
+                    pointFaceAvg[2]/=jMax;
+
+                    point_face_average[i] = pointFaceAvg;
+                }
+            
+                var point_edge_average = [];
+                
+                for (i = 0, iMax = pointCount; i<iMax; i++) {
+                    var pointEdgeAvg = [0,0,0];
+                    for (j = 0, jMax = point_edge_list[i].length; j < jMax; j++) {
+                        var addEdgePoint = point_edge_list[i][j];
+                        pointEdgeAvg[0] += addEdgePoint[0]; 
+                        pointEdgeAvg[1] += addEdgePoint[1]; 
+                        pointEdgeAvg[2] += addEdgePoint[2]; 
+                    }
+                    pointEdgeAvg[0]/=jMax;
+                    pointEdgeAvg[1]/=jMax;
+                    pointEdgeAvg[2]/=jMax;
+
+                    point_edge_average[i] = pointEdgeAvg;
+                }
+            
+
+                for (i = 0, iMax = pointCount; i<iMax; i++) {
+                    var n = point_face_list[i].length;
+                    var pt = this.points[i];
+                    
+                    var m1 = (n-3) / n;
+                    var m2 = 1.0 / n;
+                    var m3 = 2.0 / n;
+
+                    var newPoint = vec3.multiply(pt,m1);
+                    newPoint = vec3.add(newPoint,vec3.multiply(point_face_average[i],m2));
+                    newPoint = vec3.add(newPoint,vec3.multiply(point_edge_average[i],m3));
+
+                    this.points[i] = newPoint;
+                }
+            }                    
+                    
+            for (i = 0; i < faceCount; i++) {
+                face = this.faces[i];
+                if (face.points.length!==3 && face.points.length!==4) continue;
+                
+                var opt = face.points.slice(0);
+                var ouv = face.uvs.slice(0);
+                var oc = face.point_colors.slice(0);
+                var on = face.point_normals.slice(0);
+                var hasUV = ouv.length===opt.length;
+                var hasColor = oc.length===opt.length;
+                var hasNormal = on.length===opt.length;
+                var omat = face.material;
+                var faceNum,e1,e2;
+ 
+                if (opt.length === 3) {
+                    this.setFaceMaterial(omat);
+                    e1 = edges[opt[0]][opt[1]]; e2 = edges[opt[2]][opt[0]];
+                    this.addFace([opt[0], e1.ep_idx, face_points[i], e2.ep_idx], i);
+                    if (hasUV) this.faces[i].uvs = [ouv[0],e1.uv,face_point_uv[i],e2.uv];
+                    if (hasColor) this.faces[i].point_colors = [oc[0],e1.color,face_point_color[i],e2.color];
+                    if (hasNormal) this.faces[i].point_normals = [on[0],e1.normal,face_point_normal[i],e2.normal];
+
+                    e1 = edges[opt[1]][opt[2]]; e2 = edges[opt[0]][opt[1]];
+                    faceNum = this.addFace([opt[1], e1.ep_idx, face_points[i], e2.ep_idx]);
+                    if (hasUV) this.faces[faceNum].uvs = [ouv[1],e1.uv,face_point_uv[i],e2.uv];
+                    if (hasColor) this.faces[faceNum].point_colors = [oc[1],e1.color,face_point_color[i],e2.color];
+                    if (hasNormal) this.faces[faceNum].point_normals = [on[1],e1.normal,face_point_normal[i],e2.normal];
+
+                    e1 = edges[opt[2]][opt[0]]; e2 = edges[opt[1]][opt[2]];
+                    faceNum = this.addFace([opt[2], e1.ep_idx, face_points[i], e2.ep_idx]);         
+                    if (hasUV) this.faces[faceNum].uvs = [ouv[2],e1.uv,face_point_uv[i],e2.uv];
+                    if (hasColor) this.faces[faceNum].point_colors = [oc[2],e1.color,face_point_color[i],e2.color];
+                    if (hasNormal) this.faces[faceNum].point_normals = [on[2],e1.normal,face_point_normal[i],e2.normal];
+               } else {
+                    this.setFaceMaterial(omat);
+                    e1 = edges[opt[0]][opt[1]]; e2 = edges[opt[3]][opt[0]];
+                    this.addFace([opt[0], e1.ep_idx, face_points[i], e2.ep_idx], i);
+                    if (hasUV) this.faces[i].uvs = [ouv[0], e1.uv, face_point_uv[i], e2.uv];
+                    if (hasColor) this.faces[i].point_colors = [oc[0], e1.color, face_point_color[i], e2.color];
+                    if (hasNormal) this.faces[i].point_normals = [on[0], e1.normal, face_point_normal[i], e2.normal];
+
+                    e1 = edges[opt[1]][opt[2]]; e2 = edges[opt[0]][opt[1]];
+                    faceNum = this.addFace([opt[1], e1.ep_idx, face_points[i], e2.ep_idx]);
+                    if (hasUV) this.faces[faceNum].uvs = [ouv[1], e1.uv, face_point_uv[i], e2.uv];
+                    if (hasColor) this.faces[faceNum].point_colors = [oc[1], e1.color, face_point_color[i], e2.color];
+                    if (hasNormal) this.faces[faceNum].point_normals = [on[1], e1.normal, face_point_normal[i], e2.normal];
+
+                    e1 = edges[opt[2]][opt[3]]; e2 = edges[opt[1]][opt[2]];
+                    faceNum = this.addFace([opt[2], e1.ep_idx, face_points[i], e2.ep_idx]);
+                    if (hasUV) this.faces[faceNum].uvs = [ouv[2], e1.uv, face_point_uv[i], e2.uv];
+                    if (hasColor) this.faces[faceNum].point_colors = [oc[2], e1.color, face_point_color[i], e2.color];
+                    if (hasNormal) this.faces[faceNum].point_normals = [on[2], e1.normal, face_point_normal[i], e2.normal];
+
+                    e1 = edges[opt[3]][opt[0]]; e2 = edges[opt[2]][opt[3]];
+                    faceNum = this.addFace([opt[3], e1.ep_idx, face_points[i], e2.ep_idx]);
+                    if (hasUV) this.faces[faceNum].uvs = [ouv[3], e1.uv, face_point_uv[i], e2.uv];
+                    if (hasColor) this.faces[faceNum].point_colors = [oc[3], e1.color, face_point_color[i], e2.color];
+                    if (hasNormal) this.faces[faceNum].point_normals = [on[3], e1.normal, face_point_normal[i], e2.normal];
+                }
+            }
+            
+            level--;
+            if (level!==0) {
+                this.subdivide(level,catmull);
+                return;
+            }
+            return this;            
+        },
 
         prepare: function (doClean) {
             if (doClean === undef) {
@@ -728,7 +1154,7 @@ CubicVR.RegisterModule("Mesh", function (base) {
                 this.buildEdges();                
             }
 
-            this.calcNormals().triangulateQuads();
+            this.triangulateQuads().calcNormals();
             
             if (this.buildWireframe && this.triangulateWireframe) {
                 this.buildEdges();           
@@ -736,7 +1162,7 @@ CubicVR.RegisterModule("Mesh", function (base) {
             
             this.compile();
             
-            if (doClean) {
+            if (doClean && !this.dynamic) {
                 this.clean();
             }
 
@@ -780,7 +1206,7 @@ CubicVR.RegisterModule("Mesh", function (base) {
 
             var compileRef = [];
 
-            var i, j, k, x, y, iMax, kMax, yMax;
+            var i, j, k, x, y, iMax, kMax, yMax, matId, segId;
 
             if (!this.materials.length) this.materials.push(new CubicVR.Material());
 
@@ -790,8 +1216,8 @@ CubicVR.RegisterModule("Mesh", function (base) {
 
             for (i = 0, iMax = this.faces.length; i < iMax; i++) {
                 if (this.faces[i].points.length === 3) {
-                    var matId = this.faces[i].material;
-                    var segId = this.faces[i].segment;
+                    matId = this.faces[i].material;
+                    segId = this.faces[i].segment;
 
                     if (compileRef[matId][segId] === undef) {
                         compileRef[matId][segId] = [];
@@ -991,8 +1417,8 @@ CubicVR.RegisterModule("Mesh", function (base) {
 
                 for (i = 0, iMax = this.edges.length; i < iMax; i++) {
                     var edge = this.edges[i];
-                    var matId = edge[0];
-                    var segId = edge[1];
+                    matId = edge[0];
+                    segId = edge[1];
                     var ptA = edge[2];
                     var ptB = edge[3];
 
@@ -1003,11 +1429,13 @@ CubicVR.RegisterModule("Mesh", function (base) {
                 }
             }
 
+            compileMap.dynamic = this.dynamic;
+
             return compileMap;
         },
 
         // Take a compileMap() result and create a compiled mesh VBO object for bufferVBO(VBO)
-        compileVBO: function (compileMap, doElements, doVertex, doNormal, doUV, doColor, doLines) {
+        compileVBO: function (compileMap, doElements, doVertex, doNormal, doUV, doColor, doLines, doDynamic) {
             if (typeof (doElements) == 'object') {
                 doElements = (doElements.element !== undef) ? doElements.element : true;
                 doVertex = (doElements.vertex !== undef) ? doElements.vertex : true;
@@ -1015,6 +1443,7 @@ CubicVR.RegisterModule("Mesh", function (base) {
                 doNormal = (doElements.normal !== undef) ? doElements.normal : true;
                 doUV = (doElements.uv !== undef) ? doElements.uv : true;
                 doLines = (doElements.lines !== undef) ? doElements.lines : (!!compileMap.line_elements);
+                doDynamic = (doElements.dynamic !== undef) ? doElements.dynamic : compileMap.dynamic;
             } else {
                 if (doElements === undef) doElements = true;
                 if (doVertex === undef) doVertex = true;
@@ -1022,25 +1451,50 @@ CubicVR.RegisterModule("Mesh", function (base) {
                 if (doNormal === undef) doNormal = true;
                 if (doUV === undef) doUV = true;
                 if (doLines === undef) doLines = (!!compileMap.line_elements);
+                if (doDynamic === undef) doDynamic = compileMap.dynamic;
             }
+            
             var compiled = {},
               numPoints,
               ofs,
               ptIdx,
               i, j, jctr, iMax,
-              k, kMax;
+              k, kMax,
+              emap, dynamicMap, step;
+              if (doDynamic) {
+                dynamicMap = {
+                    points: new Int16Array(compileMap.points.length),
+                    face_points: new Int16Array(compileMap.points.length * 2)
+                }
+                
+                compiled.dynamicMap = dynamicMap;
+                compiled.dynamic = true;
+              }
+              
 
             if (compileMap.points && doVertex) {
                 numPoints = compileMap.points.length;
                 compiled.vbo_points = new Float32Array(numPoints * 3);
-                ofs = 0;
                 for (i = 0, iMax = numPoints; i < iMax; i++) {
                     ptIdx = compileMap.points[i];
-                    compiled.vbo_points[ofs++] = this.points[ptIdx][0];
-                    compiled.vbo_points[ofs++] = this.points[ptIdx][1];
-                    compiled.vbo_points[ofs++] = this.points[ptIdx][2];
+                    compiled.vbo_points[i*3] = this.points[ptIdx][0];
+                    compiled.vbo_points[i*3+1] = this.points[ptIdx][1];
+                    compiled.vbo_points[i*3+2] = this.points[ptIdx][2];
+                    if (doDynamic) {
+                        dynamicMap.points[i] = ptIdx;
+                    }
                 }
             }
+
+            if (doDynamic) {
+                var sourceIndex = compileMap.normals||compileMap.colors||compileMap.uvs;
+                for (i = 0, iMax = sourceIndex.length; i < iMax; i++) {
+                    ptIdx = sourceIndex[i];
+                    dynamicMap.face_points[i*2] = ptIdx[0];
+                    dynamicMap.face_points[i*2+1] = ptIdx[1];
+                }
+            }
+
 
             if (compileMap.normals && doNormal) {
                 numPoints = compileMap.normals.length;
@@ -1084,11 +1538,11 @@ CubicVR.RegisterModule("Mesh", function (base) {
                 for (i = 0, iMax = compileMap.elements.length; i < iMax; i++) {
                     compiled.elements_ref[i] = [];
 
-                    var jctr = 0;
+                    jctr = 0;
 
                     for (j in compileMap.elements[i]) {
                         if (compileMap.elements[i].hasOwnProperty(j)) {
-                            var emap = compileMap.elements[i][j];
+                            emap = compileMap.elements[i][j];
                             for (k = 0, kMax = emap.length; k < kMax; k++) {
                                 compiled.vbo_elements.push(emap[k]);
                             }
@@ -1113,9 +1567,9 @@ CubicVR.RegisterModule("Mesh", function (base) {
 
                     jctr = 0;
 
-                    for (var j in compileMap.line_elements[i]) {
+                    for (j in compileMap.line_elements[i]) {
                         if (compileMap.line_elements[i].hasOwnProperty(j)) {
-                            var emap = compileMap.line_elements[i][j];
+                            emap = compileMap.line_elements[i][j];
                             for (k = 0, kMax = emap.length; k < kMax; k++) {
                                 compiled.vbo_line_elements.push(emap[k]);
                             }
@@ -1134,6 +1588,53 @@ CubicVR.RegisterModule("Mesh", function (base) {
             compiled.bounds = compileMap.bounds;
 
             return compiled;
+        },
+
+        updateVBO: function (VBO) {
+            if (!VBO.dynamic) return false;
+            
+            var i,iMax;
+            var dm = VBO.dynamicMap;
+                        
+            var step = 0;
+            for (i = 0, iMax = dm.points.length; i < iMax; i++) {
+                var pt = this.points[dm.points[i]];
+                var pt_norm = this.faces[dm.face_points[i*2]].point_normals[dm.face_points[i*2+1]];
+                VBO.vbo_points[i*3] = pt[0];
+                VBO.vbo_points[i*3+1] = pt[1];
+                VBO.vbo_points[i*3+2] = pt[2];
+                VBO.vbo_normals[i*3] = pt_norm[0];
+                VBO.vbo_normals[i*3+1] = pt_norm[1];
+                VBO.vbo_normals[i*3+2] = pt_norm[2];
+            }
+            
+            return this;
+        },
+
+        rebufferVBO: function(VBO, buffer) {
+            var gl = GLCore.gl;
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, buffer.gl_points);
+            gl.bufferData(gl.ARRAY_BUFFER, VBO.vbo_points, gl.DYNAMIC_DRAW);
+
+            if (VBO.vbo_normals) {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffer.gl_normals);
+                gl.bufferData(gl.ARRAY_BUFFER, VBO.vbo_normals, gl.DYNAMIC_DRAW);
+            }
+
+            if (VBO.vbo_uvs) {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffer.gl_uvs);
+                gl.bufferData(gl.ARRAY_BUFFER, VBO.vbo_uvs, gl.DYNAMIC_DRAW);
+            }
+
+            if (VBO.vbo_colors) {
+                gl.bindBuffer(gl.ARRAY_BUFFER, buffer.gl_colors);
+                gl.bufferData(gl.ARRAY_BUFFER, VBO.vbo_colors, gl.STATIC_DRAW);
+            }
+
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, null);
+
+            return this;
         },
 
         // take a compiled VBO from compileVBO() and create a mesh buffer object for bindBuffer(), fuse with baseBuffer overlay if provided
@@ -1206,6 +1707,19 @@ CubicVR.RegisterModule("Mesh", function (base) {
             return buffer;
         },
 
+        update: function(calcNorm) {
+            calcNorm = (calcNorm!==undef)?calcNorm:true;
+            if (!this.dynamic) {
+                log("Mesh not defined as dynamic, cannot update.");
+                return false;
+            }
+            if (calcNorm && this.normalMapRef) {
+                this.recalcNormals();
+            }
+            this.updateVBO(this.dynamicData.VBO);
+            this.rebufferVBO(this.dynamicData.VBO,this.dynamicData.buffer);            
+        },
+
         // bind a bufferVBO object result to the mesh
         bindBuffer: function (vbo_buffer) {
             if (this.originBuffer === null) {
@@ -1222,7 +1736,19 @@ CubicVR.RegisterModule("Mesh", function (base) {
 
         // Do the works
         compile: function (tolerance) {
-            this.bindBuffer(this.bufferVBO(this.compileVBO(this.compileMap(tolerance))));
+            var VBO = this.compileVBO(this.compileMap(tolerance));
+            var buffer = this.bufferVBO(VBO);
+            this.bindBuffer(buffer);
+            if (this.dynamic) {
+                this.sourcePoints = [];
+                for (var i = 0, iMax = this.points.length; i<iMax; i++) {
+                    this.sourcePoints[i] = this.points[i].slice(0);
+                }
+                this.dynamicData = {
+                    VBO: VBO,
+                    buffer: buffer
+                }
+            }
             return this;
         },
 
